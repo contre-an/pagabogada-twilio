@@ -73,10 +73,13 @@ app.post('/api/upload-excel', upload.single('file'), (req, res) => {
     // Extraer números de teléfono (busca en la primera columna o columna con nombre "telefono", "phone", "numero", etc)
     const phones = [];
     data.forEach(row => {
-      // Buscar en todas las propiedades del objeto
-      for (let key in row) {
+      const phoneKeys = Object.keys(row).filter(k =>
+        /telefono|phone|numero|celular|movil|whatsapp/i.test(k)
+      );
+      const searchKeys = phoneKeys.length > 0 ? phoneKeys : Object.keys(row);
+
+      for (let key of searchKeys) {
         const value = String(row[key]).trim();
-        // Validar que sea un número de teléfono
         if (/^\+?[0-9]{10,15}$/.test(value)) {
           phones.push(value);
           break;
