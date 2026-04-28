@@ -16,7 +16,10 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
 const whatsappPhone = process.env.TWILIO_WHATSAPP_NUMBER;
+const whatsappTemplateSid = process.env.TWILIO_TEMPLATE_SID;
 const lawyerPhone = process.env.LAWYER_PHONE;
+const lawyerName = process.env.LAWYER_NAME || 'Luisa Fernanda Ossa';
+const entityName = process.env.ENTITY_NAME || 'Finagro';
 const port = process.env.PORT || 3001;
 
 // ────── MIDDLEWARE ──────
@@ -71,36 +74,38 @@ app.post('/api/upload-excel', upload.single('file'), (req, res) => {
     const worksheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json(worksheet);
 
-    // Extraer números de teléfono (busca en la primera columna o columna con nombre "telefono", "phone", "numero", etc)
-    const phones = [];
+    const contacts = [];
     data.forEach(row => {
-      const phoneKeys = Object.keys(row).filter(k =>
-        /telefono|phone|numero|celular|movil|whatsapp/i.test(k)
-      );
+      const nombreKey = Object.keys(row).find(k => /nombre/i.test(k));
+      const bancoKey = Object.keys(row).find(k => /intermediario|banco|entidad/i.test(k));
+      const phoneKeys = Object.keys(row).filter(k => /telefono|phone|numero|celular|movil|whatsapp/i.test(k));
       const searchKeys = phoneKeys.length > 0 ? phoneKeys : Object.keys(row);
 
       for (let key of searchKeys) {
         const value = String(row[key]).trim();
         if (/^\+?[0-9]{10,15}$/.test(value)) {
-          phones.push(value);
+          const digits = value.replace(/\D/g, '');
+          let phone;
+          if (value.startsWith('+')) phone = '+' + digits;
+          else if (digits.startsWith('57') && digits.length >= 12) phone = '+' + digits;
+          else phone = '+57' + digits;
+
+          contacts.push({
+            phone,
+            nombre: nombreKey ? String(row[nombreKey]).trim() : '',
+            banco: bancoKey ? String(row[bancoKey]).trim() : ''
+          });
           break;
         }
       }
     });
 
-    // Formatear números a internacional si no tienen +57
-    const formattedPhones = phones.map(phone => {
-      const digits = phone.replace(/\D/g, '');
-      if (phone.startsWith('+')) return '+' + digits;
-      if (digits.startsWith('57') && digits.length >= 12) return '+' + digits;
-      return '+57' + digits;
-    });
-
     res.json({
       success: true,
-      total: formattedPhones.length,
-      phones: formattedPhones,
-      message: `Se extrajeron ${formattedPhones.length} números de teléfono`
+      total: contacts.length,
+      phones: contacts.map(c => c.phone),
+      contacts,
+      message: `Se extrajeron ${contacts.length} contactos`
     });
 
   } catch (error) {
@@ -117,7 +122,7 @@ app.post('/api/upload-excel', upload.single('file'), (req, res) => {
  */
 app.post('/api/send-messages', async (req, res) => {
   try {
-    const { phones, messageTemplate } = req.body;
+    const { phones, contacts, messageTemplate } = req.body;
 
     if (!phones || !Array.isArray(phones) || phones.length === 0) {
       return res.status(400).json({ error: 'Lista de teléfonos vacía' });
@@ -131,20 +136,23 @@ app.post('/api/send-messages', async (req, res) => {
     let successful = 0;
     let failed = 0;
 
-    const body = messageTemplate || `¡Hola! Te estamos contactando sobre tu cartera. Comunícate con nosotros al: ${lawyerPhone}`;
-
-    for (const phone of phones) {
+    for (let i = 0; i < phones.length; i++) {
+      const phone = phones[i];
+      const contact = (contacts && contacts[i]) || {};
+      const nombre = contact.nombre || 'Cliente';
+      const banco = contact.banco || 'la entidad financiera';
       let sent = false;
 
-      // Intentar primero por WhatsApp
-      if (whatsappPhone) {
+      // Intentar primero por WhatsApp con template aprobado
+      if (whatsappPhone && whatsappTemplateSid) {
         try {
           const message = await client.messages.create({
-            body,
             from: `whatsapp:${whatsappPhone}`,
-            to: `whatsapp:${phone}`
+            to: `whatsapp:${phone}`,
+            contentSid: whatsappTemplateSid,
+            contentVariables: JSON.stringify({ '1': nombre, '2': lawyerName, '3': entityName, '4': banco })
           });
-          results.push({ phone, status: 'enviado', canal: 'whatsapp', messageId: message.sid, timestamp: new Date() });
+          results.push({ phone, nombre, status: 'enviado', canal: 'whatsapp', messageId: message.sid, timestamp: new Date() });
           successful++;
           sent = true;
         } catch (err) {
@@ -155,15 +163,17 @@ app.post('/api/send-messages', async (req, res) => {
       // Si WhatsApp falló o no está configurado, enviar SMS
       if (!sent) {
         try {
+          const smsBody = messageTemplate ||
+            `Buenas tardes señor/a ${nombre}, le escribe ${lawyerName}, abogada externa de ${entityName}. Me gustaría comentarle las alternativas de pago disponibles respecto a la obligación vencida que tiene con ${banco}. Si le interesa, comuníquese conmigo al ${lawyerPhone} o vía WhatsApp.`;
           const message = await client.messages.create({
-            body,
+            body: smsBody,
             from: twilioPhone,
             to: phone
           });
-          results.push({ phone, status: 'enviado', canal: 'sms', messageId: message.sid, timestamp: new Date() });
+          results.push({ phone, nombre, status: 'enviado', canal: 'sms', messageId: message.sid, timestamp: new Date() });
           successful++;
         } catch (error) {
-          results.push({ phone, status: 'error', canal: 'sms', error: error.message, timestamp: new Date() });
+          results.push({ phone, nombre, status: 'error', canal: 'sms', error: error.message, timestamp: new Date() });
           failed++;
         }
       }
