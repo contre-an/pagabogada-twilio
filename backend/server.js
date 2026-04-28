@@ -15,6 +15,7 @@ const app = express();
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
+const whatsappPhone = process.env.TWILIO_WHATSAPP_NUMBER;
 const lawyerPhone = process.env.LAWYER_PHONE;
 const port = process.env.PORT || 3001;
 
@@ -130,34 +131,44 @@ app.post('/api/send-messages', async (req, res) => {
     let successful = 0;
     let failed = 0;
 
-    // Enviar mensaje a cada número
-    for (const phone of phones) {
-      try {
-        const message = await client.messages.create({
-          body: messageTemplate || `¡Hola! Te estamos contactando sobre tu cartera. Comunícate con nosotros al: ${lawyerPhone}`,
-          from: twilioPhone,
-          to: phone
-        });
+    const body = messageTemplate || `¡Hola! Te estamos contactando sobre tu cartera. Comunícate con nosotros al: ${lawyerPhone}`;
 
-        results.push({
-          phone,
-          status: 'enviado',
-          messageId: message.sid,
-          timestamp: new Date()
-        });
-        successful++;
-      } catch (error) {
-        results.push({
-          phone,
-          status: 'error',
-          error: error.message,
-          timestamp: new Date()
-        });
-        failed++;
+    for (const phone of phones) {
+      let sent = false;
+
+      // Intentar primero por WhatsApp
+      if (whatsappPhone) {
+        try {
+          const message = await client.messages.create({
+            body,
+            from: `whatsapp:${whatsappPhone}`,
+            to: `whatsapp:${phone}`
+          });
+          results.push({ phone, status: 'enviado', canal: 'whatsapp', messageId: message.sid, timestamp: new Date() });
+          successful++;
+          sent = true;
+        } catch (err) {
+          // WhatsApp falló, intentar SMS
+        }
       }
-      
-      // Pequeña pausa entre envíos (para evitar rate limiting)
-      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Si WhatsApp falló o no está configurado, enviar SMS
+      if (!sent) {
+        try {
+          const message = await client.messages.create({
+            body,
+            from: twilioPhone,
+            to: phone
+          });
+          results.push({ phone, status: 'enviado', canal: 'sms', messageId: message.sid, timestamp: new Date() });
+          successful++;
+        } catch (error) {
+          results.push({ phone, status: 'error', canal: 'sms', error: error.message, timestamp: new Date() });
+          failed++;
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     res.json({
