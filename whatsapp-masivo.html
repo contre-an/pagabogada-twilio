@@ -337,6 +337,7 @@
     const resultsBody = document.getElementById('resultsBody');
 
     let uploadedPhones = [];
+    let uploadedContacts = [];
 
     // ────── DRAG & DROP ──────
     uploadArea.addEventListener('click', () => fileInput.click());
@@ -380,6 +381,7 @@
 
         if (data.success) {
           uploadedPhones = data.phones;
+          uploadedContacts = data.contacts || [];
           displayPhones(data.phones);
           showStatus('success', `✅ ${data.message}`);
           sendBtn.disabled = false;
@@ -424,6 +426,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phones: uploadedPhones,
+            contacts: uploadedContacts,
             messageTemplate: messageTemplate.value || undefined
           })
         });

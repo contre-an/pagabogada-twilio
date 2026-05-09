@@ -156,7 +156,7 @@ app.post('/api/send-messages', async (req, res) => {
           successful++;
           sent = true;
         } catch (err) {
-          // WhatsApp falló, intentar SMS
+          console.error(`WhatsApp error [${phone}]: ${err.code} - ${err.message}`);
         }
       }
 
